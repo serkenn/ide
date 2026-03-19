@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
@@ -534,7 +534,7 @@ process.env.DECKIDE_DATA_DIR = dataDir;
 process.env.PORT = String(port);
 process.env.HOST = host;
 
-const { createServer } = await import(path.join(__dirname, '..', 'dist', 'server.js'));
+const { createServer } = await import(pathToFileURL(path.join(__dirname, '..', 'dist', 'server.js')).href);
 await createServer();
 
 if (startOptions.open) {
