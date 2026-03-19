@@ -182,6 +182,10 @@ Usage:
   deckide config get <key>       Get a config value
   deckide config reset           Reset all settings
 
+  deckide autostart on           Enable auto-start at login
+  deckide autostart off          Disable auto-start at login
+  deckide autostart status       Show auto-start status
+
 Options (for start):
   -p, --port <port>              Port (default: 8787)
   --host <host>                  Host (default: 0.0.0.0)
@@ -344,6 +348,57 @@ if (command === 'auth') {
   }
 
   console.error(`Unknown auth command: ${sub}`);
+  process.exit(1);
+}
+
+// ── deckide autostart ──
+if (command === 'autostart') {
+  const sub = args[1] || 'status';
+  const taskName = 'DeckIDE';
+
+  if (!isWindows) {
+    console.error('autostart is only supported on Windows.');
+    process.exit(1);
+  }
+
+  if (sub === 'status') {
+    try {
+      execSync(`schtasks /query /tn "${taskName}"`, { stdio: 'ignore' });
+      console.log('Auto-start: enabled');
+    } catch {
+      console.log('Auto-start: disabled');
+    }
+    process.exit(0);
+  }
+
+  if (sub === 'on') {
+    const nodePath = process.execPath;
+    const scriptPath = fileURLToPath(import.meta.url);
+    const cmd = `"${nodePath}" "${scriptPath}" start --no-open`;
+    try {
+      execSync(
+        `schtasks /create /tn "${taskName}" /tr "${cmd}" /sc onlogon /rl limited /f`,
+        { stdio: 'ignore' }
+      );
+      console.log(`Auto-start enabled. DeckIDE will start at login.`);
+    } catch {
+      console.error('Failed to register auto-start. Try running as Administrator.');
+      process.exit(1);
+    }
+    process.exit(0);
+  }
+
+  if (sub === 'off') {
+    try {
+      execSync(`schtasks /delete /tn "${taskName}" /f`, { stdio: 'ignore' });
+      console.log('Auto-start disabled.');
+    } catch {
+      console.log('Auto-start was not enabled.');
+    }
+    process.exit(0);
+  }
+
+  console.error(`Unknown autostart command: ${sub}`);
   process.exit(1);
 }
 
