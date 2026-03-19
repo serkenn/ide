@@ -13,6 +13,14 @@ const settingsFile = path.join(dataDir, 'settings.json');
 const pidFile = path.join(dataDir, 'server.pid');
 const logFile = path.join(dataDir, 'server.log');
 
+const isWindows = process.platform === 'win32';
+const nullDevice = isWindows ? 'NUL' : '/dev/null';
+
+/** Cross-platform synchronous sleep */
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 // ─── Settings helpers ───────────────────────────────────────────
 
 function loadSettings() {
@@ -34,7 +42,7 @@ function getPort() {
 
 function isServerRunningOnPort(port) {
   try {
-    execSync(`curl -sf -o /dev/null http://localhost:${port}/health`, {
+    execSync(`curl -sf -o ${nullDevice} http://localhost:${port}/health`, {
       timeout: 2000, stdio: 'ignore',
     });
     return true;
@@ -65,7 +73,7 @@ function waitForExit(pid, timeoutMs = 5000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try { process.kill(pid, 0); } catch { return true; }
-    execSync('sleep 0.2', { stdio: 'ignore' });
+    sleepSync(200);
   }
   return false;
 }
@@ -74,7 +82,9 @@ function waitForExit(pid, timeoutMs = 5000) {
 function getAuthFlags() {
   const s = loadSettings();
   if (s.basicAuthEnabled && s.basicAuthUser && s.basicAuthPassword) {
-    return `-u '${s.basicAuthUser}:${s.basicAuthPassword}'`;
+    // Windows cmd.exe requires double quotes; Unix supports single quotes
+    const q = isWindows ? '"' : "'";
+    return `-u ${q}${s.basicAuthUser}:${s.basicAuthPassword}${q}`;
   }
   return '';
 }
@@ -83,7 +93,7 @@ function getAuthFlags() {
 function tryHttpShutdown(port) {
   const auth = getAuthFlags();
   try {
-    execSync(`curl -sf ${auth} -X POST http://localhost:${port}/api/shutdown -H "Content-Type: application/json" -d '{}'`, {
+    execSync(`curl -sf ${auth} -X POST http://localhost:${port}/api/shutdown -H "Content-Type: application/json" -d "{}"`, {
       timeout: 5000, stdio: 'ignore',
     });
     return true;
@@ -368,9 +378,24 @@ if (command === 'logs') {
   }
   const follow = args.includes('-f') || args.includes('--follow');
   if (follow) {
-    const tail = spawn('tail', ['-f', logFile], { stdio: 'inherit' });
-    tail.on('exit', () => process.exit(0));
-    await new Promise(() => {}); // Block until tail exits
+    let pos = Math.max(0, fs.statSync(logFile).size - 10240);
+    const readNew = () => {
+      try {
+        const size = fs.statSync(logFile).size;
+        if (size > pos) {
+          const fd = fs.openSync(logFile, 'r');
+          const buf = Buffer.allocUnsafe(size - pos);
+          fs.readSync(fd, buf, 0, buf.length, pos);
+          fs.closeSync(fd);
+          process.stdout.write(buf);
+          pos = size;
+        }
+      } catch {}
+    };
+    readNew();
+    const timer = setInterval(readNew, 200);
+    process.on('SIGINT', () => { clearInterval(timer); process.exit(0); });
+    await new Promise(() => {});
   } else {
     const lines = fs.readFileSync(logFile, 'utf-8');
     // Show last 50 lines
