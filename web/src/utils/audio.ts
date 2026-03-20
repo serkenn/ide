@@ -1,12 +1,15 @@
 /**
- * Audio utilities – sound effects + VOICEVOX (Zundamon) / Web Speech API TTS
+ * Audio utilities – sound effects + VOICEVOX (Zundamon) TTS via server proxy
+ *
+ * VOICEVOX requests go through /api/tts (backend proxy) to avoid browser CORS restrictions.
+ * Falls back to Web Speech API if VOICEVOX is unreachable.
  */
 
 // ── LocalStorage keys ──────────────────────────────────────────────────────
-export const STORAGE_KEY_AUDIO_SOUND     = 'deck-audio-sound';
-export const STORAGE_KEY_AUDIO_VOICE     = 'deck-audio-voice';
-export const STORAGE_KEY_AUDIO_VOICEVOX  = 'deck-audio-voicevox-url';
-export const STORAGE_KEY_AUDIO_SPEAKER   = 'deck-audio-speaker-id';
+export const STORAGE_KEY_AUDIO_SOUND    = 'deck-audio-sound';
+export const STORAGE_KEY_AUDIO_VOICE    = 'deck-audio-voice';
+export const STORAGE_KEY_AUDIO_VOICEVOX = 'deck-audio-voicevox-url';
+export const STORAGE_KEY_AUDIO_SPEAKER  = 'deck-audio-speaker-id';
 
 export interface AudioSettings {
   soundEnabled: boolean;
@@ -17,8 +20,8 @@ export interface AudioSettings {
 
 export function getAudioSettings(): AudioSettings {
   return {
-    soundEnabled: localStorage.getItem(STORAGE_KEY_AUDIO_SOUND)  !== 'off',
-    voiceEnabled: localStorage.getItem(STORAGE_KEY_AUDIO_VOICE)  === 'on',
+    soundEnabled: localStorage.getItem(STORAGE_KEY_AUDIO_SOUND)    !== 'off',
+    voiceEnabled: localStorage.getItem(STORAGE_KEY_AUDIO_VOICE)    === 'on',
     voicevoxUrl:  localStorage.getItem(STORAGE_KEY_AUDIO_VOICEVOX) ?? 'http://localhost:50021',
     speakerId:    Number(localStorage.getItem(STORAGE_KEY_AUDIO_SPEAKER) ?? '3'),
   };
@@ -34,10 +37,10 @@ export function saveAudioSettings(s: AudioSettings): void {
 // ── AudioContext (lazy, shared) ────────────────────────────────────────────
 let _ctx: AudioContext | null = null;
 
-function ctx(): AudioContext | null {
+function getCtx(): AudioContext | null {
   try {
     if (!_ctx || _ctx.state === 'closed') _ctx = new AudioContext();
-    if (_ctx.state === 'suspended')       _ctx.resume().catch(() => {});
+    if (_ctx.state === 'suspended')       void _ctx.resume();
     return _ctx;
   } catch {
     return null;
@@ -50,7 +53,7 @@ function tone(
   startOffset: number,
   duration: number,
   volume = 0.15,
-  type: OscillatorType = 'sine'
+  type: OscillatorType = 'sine',
 ): void {
   const t    = ac.currentTime + startOffset;
   const osc  = ac.createOscillator();
@@ -70,118 +73,115 @@ function tone(
 
 /** 完了チャイム（BEL や進捗完了時） */
 export function playChime(): void {
-  const ac = ctx();
+  const ac = getCtx();
   if (!ac) return;
   try {
-    // 上昇3音ベル
     tone(ac, 880,  0,    0.35, 0.14);
     tone(ac, 1100, 0.12, 0.35, 0.12);
     tone(ac, 1320, 0.24, 0.45, 0.10);
   } catch {}
 }
 
-/** 終了・停止サウンド（プロセス終了時） */
+/** 終了・停止サウンド */
 export function playExit(): void {
-  const ac = ctx();
+  const ac = getCtx();
   if (!ac) return;
   try {
-    // 下降2音 + 短いノイズ感
     tone(ac, 550, 0,    0.28, 0.13);
     tone(ac, 390, 0.22, 0.40, 0.10);
   } catch {}
 }
 
-// ── Debounce helper ────────────────────────────────────────────────────────
+// ── Debounce ───────────────────────────────────────────────────────────────
 const _timers = new Map<string, ReturnType<typeof setTimeout>>();
 function debounce(key: string, fn: () => void, ms: number) {
   if (_timers.has(key)) clearTimeout(_timers.get(key)!);
   _timers.set(key, setTimeout(() => { _timers.delete(key); fn(); }, ms));
 }
 
-// ── TTS ───────────────────────────────────────────────────────────────────
+// ── TTS via /api/tts proxy ─────────────────────────────────────────────────
 
-let _voicevoxAvailable: boolean | null = null; // cache probe result
+let _voicevoxWorking: boolean | null = null; // cached probe result
+let _lastProbeUrl = '';
 
-async function probeVoicevox(baseUrl: string): Promise<boolean> {
-  if (_voicevoxAvailable !== null) return _voicevoxAvailable;
-  try {
-    const res = await fetch(`${baseUrl}/version`, {
-      signal: AbortSignal.timeout(1000),
-    });
-    _voicevoxAvailable = res.ok;
-  } catch {
-    _voicevoxAvailable = false;
-  }
-  return _voicevoxAvailable;
-}
-
-// Reset probe cache when URL changes
-let _lastVoicevoxUrl = '';
-function resetProbeIfUrlChanged(url: string) {
-  if (url !== _lastVoicevoxUrl) {
-    _lastVoicevoxUrl = url;
-    _voicevoxAvailable = null;
+function resetProbeCache(url: string) {
+  if (url !== _lastProbeUrl) {
+    _lastProbeUrl = url;
+    _voicevoxWorking = null;
   }
 }
 
-/**
- * テキストを音声読み上げ。
- * 1. VOICEVOX (ずんだもん) を試みる
- * 2. 失敗したら Web Speech API (ブラウザ内蔵TTS) にフォールバック
- */
-export async function speak(
+async function playVoicevox(
   text: string,
-  settings?: AudioSettings
-): Promise<void> {
-  const s = settings ?? getAudioSettings();
-  if (!s.voiceEnabled) return;
+  settings: AudioSettings,
+): Promise<boolean> {
+  resetProbeCache(settings.voicevoxUrl);
 
-  resetProbeIfUrlChanged(s.voicevoxUrl);
+  // AudioContext を即時ウォームアップ（ユーザージェスチャーが有効なうちに）
+  // fetch の完了を待つと autoplay ポリシーで play() がブロックされるため
+  const ac = getCtx();
 
-  // ── VOICEVOX ──
-  const available = await probeVoicevox(s.voicevoxUrl);
-  if (available) {
-    try {
-      const queryRes = await fetch(
-        `${s.voicevoxUrl}/audio_query?text=${encodeURIComponent(text)}&speaker=${s.speakerId}`,
-        { method: 'POST', signal: AbortSignal.timeout(3000) }
-      );
-      if (queryRes.ok) {
-        const query = await queryRes.json() as Record<string, unknown>;
-        // 少し速く話す
-        if (typeof query['speedScale'] === 'number') query['speedScale'] = 1.15;
-        const synthRes = await fetch(
-          `${s.voicevoxUrl}/synthesis?speaker=${s.speakerId}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(query),
-            signal: AbortSignal.timeout(6000),
-          }
-        );
-        if (synthRes.ok) {
-          const blob = await synthRes.blob();
-          const url  = URL.createObjectURL(blob);
-          const audio = new Audio(url);
-          audio.volume = 0.85;
-          audio.play().catch(() => {});
-          audio.onended = () => URL.revokeObjectURL(url);
-          return;
-        }
-      }
-    } catch {
-      _voicevoxAvailable = false; // 次回は直接フォールバック
+  try {
+    const res = await fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text,
+        voicevoxUrl: settings.voicevoxUrl,
+        speakerId:   settings.speakerId,
+      }),
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!res.ok) {
+      _voicevoxWorking = false;
+      console.warn('[TTS] VOICEVOX proxy error:', res.status, await res.text().catch(() => ''));
+      return false;
     }
-  }
 
-  // ── Web Speech API フォールバック ──
+    const arrayBuffer = await res.arrayBuffer();
+
+    // AudioContext 経由で再生（autoplay ポリシーを回避）
+    if (ac) {
+      try {
+        const audioBuffer = await ac.decodeAudioData(arrayBuffer);
+        const source = ac.createBufferSource();
+        const gainNode = ac.createGain();
+        gainNode.gain.value = 0.85;
+        source.buffer = audioBuffer;
+        source.connect(gainNode);
+        gainNode.connect(ac.destination);
+        source.start(0);
+        _voicevoxWorking = true;
+        return true;
+      } catch (decodeErr) {
+        console.warn('[TTS] AudioContext decode failed, falling back to Audio element:', decodeErr);
+      }
+    }
+
+    // フォールバック: Audio 要素（AudioContext 使用不可の場合）
+    const blob = new Blob([arrayBuffer], { type: 'audio/wav' });
+    const url  = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.volume = 0.85;
+    audio.onended = () => URL.revokeObjectURL(url);
+    await audio.play();
+    _voicevoxWorking = true;
+    return true;
+  } catch (err) {
+    _voicevoxWorking = false;
+    console.warn('[TTS] VOICEVOX failed:', err);
+    return false;
+  }
+}
+
+function playWebSpeech(text: string): void {
   try {
     if (!('speechSynthesis' in window)) return;
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang  = 'ja-JP';
     utterance.rate  = 1.1;
     utterance.pitch = 1.2;
-    // 日本語ボイスがあれば使う
     const voices = window.speechSynthesis.getVoices();
     const jaVoice = voices.find(v => v.lang.startsWith('ja'));
     if (jaVoice) utterance.voice = jaVoice;
@@ -190,14 +190,30 @@ export async function speak(
   } catch {}
 }
 
-// ── Convenience: play + speak together ────────────────────────────────────
+/**
+ * テキスト読み上げ。
+ * 1. /api/tts 経由で VOICEVOX (ずんだもん) を使用
+ * 2. 失敗したら Web Speech API にフォールバック
+ */
+export async function speak(
+  text: string,
+  settings?: AudioSettings,
+): Promise<void> {
+  const s = settings ?? getAudioSettings();
+  if (!s.voiceEnabled) return;
 
-/** BEL検出時（コマンド完了通知など）*/
+  const ok = await playVoicevox(text, s);
+  if (!ok) playWebSpeech(text);
+}
+
+// ── Convenience ────────────────────────────────────────────────────────────
+
+/** BEL検出時（コマンド完了） */
 export function notifyComplete(settings?: AudioSettings): void {
   const s = settings ?? getAudioSettings();
   debounce('complete', () => {
     if (s.soundEnabled) playChime();
-    speak('完了', s);
+    void speak('完了', s);
   }, 300);
 }
 
@@ -205,5 +221,5 @@ export function notifyComplete(settings?: AudioSettings): void {
 export function notifyExit(settings?: AudioSettings): void {
   const s = settings ?? getAudioSettings();
   if (s.soundEnabled) playExit();
-  speak('プロセスが終了しました', s);
+  void speak('プロセスが終了しました', s);
 }

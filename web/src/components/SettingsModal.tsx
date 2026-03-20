@@ -57,6 +57,8 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
 
   // Audio / voice settings (client-side localStorage)
   const [audio, setAudio] = useState<AudioSettings>(getAudioSettings);
+  const [ttsStatus, setTtsStatus] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle');
+  const [ttsError, setTtsError] = useState('');
 
   const loadWsStats = () => {
     fetch('/api/ws/stats')
@@ -123,6 +125,41 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
       console.error('Failed to clear WS connections:', err);
     } finally {
       setIsClearing(false);
+    }
+  };
+
+  const handleTtsTest = async () => {
+    setTtsStatus('loading');
+    setTtsError('');
+    // AudioContext を先に初期化（ユーザージェスチャーが有効なうちに）
+    try { new AudioContext().resume().catch(() => {}); } catch {}
+    try {
+      const res = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: 'こんにちは、ずんだもんなのだ！',
+          voicevoxUrl: audio.voicevoxUrl,
+          speakerId: audio.speakerId,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` })) as { error?: string };
+        throw new Error(body.error ?? `HTTP ${res.status}`);
+      }
+      const arrayBuffer = await res.arrayBuffer();
+      const ac = new AudioContext();
+      const audioBuffer = await ac.decodeAudioData(arrayBuffer);
+      const src = ac.createBufferSource();
+      src.buffer = audioBuffer;
+      src.connect(ac.destination);
+      src.start(0);
+      setTtsStatus('ok');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setTtsStatus('error');
+      setTtsError(msg);
+      console.error('[TTS test]', err);
     }
   };
 
@@ -317,15 +354,24 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
                         type="text"
                         className={`flex-1 ${INPUT_CLASS}`}
                         value={audio.voicevoxUrl}
-                        onChange={e => setAudio(a => ({ ...a, voicevoxUrl: e.target.value }))}
+                        onChange={e => { setAudio(a => ({ ...a, voicevoxUrl: e.target.value })); setTtsStatus('idle'); }}
                         placeholder="http://localhost:50021"
                       />
                       <button
                         type="button"
-                        className="text-[11px] border border-border rounded px-2 py-1 text-muted hover:text-ink hover:bg-list-hover whitespace-nowrap"
-                        onClick={() => speak('こんにちは、ずんだもんなのだ！', audio)}
-                      >テスト</button>
+                        className="text-[11px] border border-border rounded px-2 py-1 text-muted hover:text-ink hover:bg-list-hover whitespace-nowrap disabled:opacity-50"
+                        onClick={handleTtsTest}
+                        disabled={ttsStatus === 'loading'}
+                      >
+                        {ttsStatus === 'loading' ? '再生中…' : 'テスト再生'}
+                      </button>
                     </div>
+                    {ttsStatus === 'ok' && (
+                      <p className="m-0 text-[11px] text-green-500">✓ ずんだもんが喋りました！</p>
+                    )}
+                    {ttsStatus === 'error' && (
+                      <p className="m-0 text-[11px] text-red-400">✗ エラー: {ttsError}</p>
+                    )}
                     <p className="m-0 text-[11px] text-muted">VOICEVOX未起動の場合はブラウザ内蔵TTSを使用</p>
                   </div>
                   <div className="flex flex-col gap-1">

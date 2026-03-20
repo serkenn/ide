@@ -141,6 +141,59 @@ export async function createServer() {
     return c.json({ cleared: closedCount });
   });
 
+  // ── VOICEVOX TTS proxy (avoids browser CORS restrictions) ──
+  app.post('/api/tts', async (c) => {
+    let body: { text?: string; voicevoxUrl?: string; speakerId?: number };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'Invalid JSON' }, 400);
+    }
+
+    const text       = String(body.text ?? '').slice(0, 200);
+    const baseUrl    = String(body.voicevoxUrl ?? 'http://localhost:50021').replace(/\/$/, '');
+    const speakerId  = Number(body.speakerId ?? 3);
+
+    if (!text) return c.json({ error: 'text is required' }, 400);
+
+    try {
+      // 1. audio_query
+      const queryRes = await fetch(
+        `${baseUrl}/audio_query?text=${encodeURIComponent(text)}&speaker=${speakerId}`,
+        { method: 'POST', signal: AbortSignal.timeout(4000) }
+      );
+      if (!queryRes.ok) {
+        return c.json({ error: `VOICEVOX audio_query failed: ${queryRes.status}` }, 502);
+      }
+      const query = await queryRes.json() as Record<string, unknown>;
+      // 少し速く話す
+      if (typeof query['speedScale'] === 'number') query['speedScale'] = 1.15;
+
+      // 2. synthesis
+      const synthRes = await fetch(
+        `${baseUrl}/synthesis?speaker=${speakerId}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(query),
+          signal: AbortSignal.timeout(8000),
+        }
+      );
+      if (!synthRes.ok) {
+        return c.json({ error: `VOICEVOX synthesis failed: ${synthRes.status}` }, 502);
+      }
+
+      const audioBuffer = await synthRes.arrayBuffer();
+      return new Response(audioBuffer, {
+        status: 200,
+        headers: { 'Content-Type': 'audio/wav' },
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return c.json({ error: `VOICEVOX unreachable: ${msg}` }, 503);
+    }
+  });
+
   const fileRouter = createFileRouter(workspaces);
   app.route('/api', fileRouter);
 
