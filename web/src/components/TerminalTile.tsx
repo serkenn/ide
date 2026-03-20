@@ -12,7 +12,7 @@ import {
   TERMINAL_BACKGROUND_COLOR,
   TERMINAL_FOREGROUND_COLOR
 } from '../constants';
-import { notifyComplete, notifyExit, getAudioSettings } from '../utils/audio';
+import { notifyComplete, notifyExit, speakStatus, getAudioSettings } from '../utils/audio';
 
 interface TerminalTileProps {
   session: TerminalSession;
@@ -153,6 +153,8 @@ export function TerminalTile({
   const processedOffsetRef = useRef<number>(0);
   const onExitRef = useRef(onExit);
   const sendRawRef = useRef<(data: string) => void>(() => {});
+  const lastCommandRef = useRef('');  // ユーザーが最後にEnterしたコマンド
+  const shellTitleRef  = useRef('');  // シェルがOSC 0/2で報告したタイトル
 
   useEffect(() => {
     onExitRef.current = onExit;
@@ -255,6 +257,16 @@ export function TerminalTile({
         sock.send(textEncoder.encode(data));
       }
     };
+
+    // OSC 0/2: シェルがタイトルを更新したら記録（bash/zsh の PROMPT_COMMAND など）
+    term.parser.registerOscHandler(0, (title) => {
+      if (!replayingBuffer) shellTitleRef.current = title;
+      return false; // xterm.js にも処理させる
+    });
+    term.parser.registerOscHandler(2, (title) => {
+      if (!replayingBuffer) shellTitleRef.current = title;
+      return false;
+    });
 
     // DSR (Device Status Report) - CSI n
     term.parser.registerCsiHandler({ final: 'n' }, (params) => {
@@ -808,7 +820,7 @@ export function TerminalTile({
           const bytes = new Uint8Array(event.data as ArrayBuffer);
           // BEL (0x07) detection – only during live output, not replay
           if (!replayingBuffer && bytes.indexOf(0x07) !== -1) {
-            notifyComplete(getAudioSettings());
+            notifyComplete(getAudioSettings(), lastCommandRef.current || undefined);
           }
           pendingWrites++;
           term.write(bytes, () => {
@@ -826,7 +838,7 @@ export function TerminalTile({
 
           if (event.code === 1000) {
             if (TERMINAL_REMOVED_REASONS.has(event.reason)) {
-              notifyExit(getAudioSettings());
+              notifyExit(getAudioSettings(), lastCommandRef.current || undefined);
               onExitRef.current();
               return;
             }
@@ -848,11 +860,30 @@ export function TerminalTile({
         if (dataDisposable) {
           dataDisposable.dispose();
         }
+        // ユーザー入力バッファ（コマンド追跡用）
+        let inputBuf = '';
         dataDisposable = term.onData((data) => {
           // Suppress during replay: xterm.js windowOptions (CSI 14t/16t/18t)
           // generate responses via onData that would be misinterpreted as
           // keyboard input by the PTY.
           if (replayingBuffer) return;
+
+          // コマンド入力追跡：Enter で確定、Backspace で1文字削除
+          for (const ch of data) {
+            if (ch === '\r' || ch === '\n') {
+              const cmd = inputBuf.trim();
+              if (cmd) lastCommandRef.current = cmd;
+              inputBuf = '';
+            } else if (ch === '\x7f' || ch === '\b') {
+              inputBuf = inputBuf.slice(0, -1);
+            } else if (ch === '\x03' || ch === '\x04') {
+              // Ctrl+C / Ctrl+D → バッファリセット
+              inputBuf = '';
+            } else if (ch >= ' ') {
+              inputBuf += ch;
+            }
+          }
+
           if (socket && socket.readyState === WebSocket.OPEN) {
             claimTerminalControl();
             socket.send(textEncoder.encode(data));
@@ -927,16 +958,32 @@ export function TerminalTile({
     <div className="terminal-tile">
       <div className="terminal-tile-header">
         <span>{session.title}</span>
-        <button
-          type="button"
-          className="terminal-close-btn"
-          onClick={() => { if (window.confirm('このターミナルを閉じますか？')) onDelete(); }}
-          aria-label="ターミナルを閉じる"
-        >
-          <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
-            <path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/>
-          </svg>
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+          {/* 状態読み上げボタン */}
+          <button
+            type="button"
+            className="terminal-close-btn"
+            onClick={() => speakStatus(shellTitleRef.current, lastCommandRef.current, getAudioSettings())}
+            aria-label="現在の状態を読み上げ"
+            title="状態を読み上げ"
+          >
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
+              <path d="M11.536 14.01A8.473 8.473 0 0014.026 8a8.473 8.473 0 00-2.49-6.01l-.708.707A7.476 7.476 0 0113.025 8c0 2.071-.84 3.946-2.197 5.303l.708.707z"/>
+              <path d="M10.121 12.596A6.48 6.48 0 0012.025 8a6.48 6.48 0 00-1.904-4.596l-.707.707A5.483 5.483 0 0111.025 8a5.483 5.483 0 01-1.61 3.89l.706.706z"/>
+              <path d="M8.707 11.182A4.486 4.486 0 0010.025 8a4.486 4.486 0 00-1.318-3.182L8 5.525A3.489 3.489 0 019.025 8 3.49 3.49 0 018 10.475l.707.707zM6.717 3.55A.5.5 0 017 4v8a.5.5 0 01-.812.39L3.825 10.5H1.5A.5.5 0 011 10V6a.5.5 0 01.5-.5h2.325l2.363-1.89a.5.5 0 01.529-.06z"/>
+            </svg>
+          </button>
+          <button
+            type="button"
+            className="terminal-close-btn"
+            onClick={() => { if (window.confirm('このターミナルを閉じますか？')) onDelete(); }}
+            aria-label="ターミナルを閉じる"
+          >
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
+              <path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/>
+            </svg>
+          </button>
+        </div>
       </div>
       <div className="terminal-tile-body" ref={containerRef} />
       <MobileKeybar onSend={(data) => sendRawRef.current(data)} />

@@ -209,17 +209,34 @@ export async function speak(
 // ── Convenience ────────────────────────────────────────────────────────────
 
 /** BEL検出時（コマンド完了） */
-export function notifyComplete(settings?: AudioSettings): void {
+export function notifyComplete(settings?: AudioSettings, command?: string): void {
   const s = settings ?? getAudioSettings();
   debounce('complete', () => {
     if (s.soundEnabled) playChime();
-    void speak('完了', s);
+    const text = command ? `${command} が完了しました` : '完了しました';
+    void speak(text, s);
   }, 300);
 }
 
 /** ターミナル終了時 */
-export function notifyExit(settings?: AudioSettings): void {
+export function notifyExit(settings?: AudioSettings, command?: string): void {
   const s = settings ?? getAudioSettings();
   if (s.soundEnabled) playExit();
-  void speak('プロセスが終了しました', s);
+  const text = command ? `${command} が終了しました` : 'プロセスが終了しました';
+  void speak(text, s);
+}
+
+/** 現在の状態を読み上げ（ボタン押下時） */
+export function speakStatus(shellTitle: string, lastCommand: string, settings?: AudioSettings): void {
+  const s = settings ?? getAudioSettings();
+  if (!s.voiceEnabled && !s.soundEnabled) return;
+  let text: string;
+  if (shellTitle) {
+    text = shellTitle;
+  } else if (lastCommand) {
+    text = `${lastCommand} を実行中`;
+  } else {
+    text = '待機中';
+  }
+  void speak(text, s);
 }
