@@ -135,25 +135,37 @@ FunctionEnd
 ; ── Main section ─────────────────────────────────────────────────
 Section "DeckIDE (必須)" SecMain
   SectionIn RO
+  SetDetailsPrint both
 
   ; ── Extract app archive ──────────────────────────────────────
+  ; ── Extract app archive ──────────────────────────────────────
+  DetailPrint "アプリケーションアーカイブをコピー中..."
   SetOutPath "$INSTDIR"
   File "${STAGING_DIR}\app.zip"
-  nsExec::ExecToLog 'powershell -NoProfile -Command "Expand-Archive -LiteralPath \"$INSTDIR\app.zip\" -DestinationPath \"$INSTDIR\" -Force"'
+  DetailPrint "アーカイブを展開中... (しばらくお待ちください)"
+  nsExec::ExecToLog 'powershell -NoProfile -Command "Expand-Archive -LiteralPath \"$INSTDIR\app.zip\" -DestinationPath \"$INSTDIR\" -Force; Write-Host \"展開完了\""'
+  Pop $0
+  DetailPrint "一時ファイルを削除中..."
   Delete "$INSTDIR\app.zip"
+  DetailPrint "アプリケーションファイルの展開が完了しました。"
 
   ; ── Install Node.js runtime ──────────────────────────────────
+  DetailPrint "Node.js ランタイムをインストール中..."
   SetOutPath "$INSTDIR\node"
   File "${STAGING_DIR}\node.exe"
+  DetailPrint "Node.js のインストールが完了しました。"
 
   ; ── Create launcher batch ────────────────────────────────────
+  DetailPrint "起動スクリプトを作成中..."
   SetOutPath "$INSTDIR"
   FileOpen $0 "$INSTDIR\deckide.bat" w
   FileWrite $0 "@echo off$\r$\n"
   FileWrite $0 '"%~dp0node\node.exe" "%~dp0bin\deckide.js" %*$\r$\n'
   FileClose $0
+  DetailPrint "起動スクリプトを作成しました: $INSTDIR\deckide.bat"
 
   ; ── Write settings.json ──────────────────────────────────────
+  DetailPrint "設定ファイルを書き込み中..."
   CreateDirectory "$PROFILE\.deckide"
 
   StrCpy $1 "false"
@@ -167,40 +179,62 @@ Section "DeckIDE (必須)" SecMain
   FileWrite $0 "  $\"openBrowser$\": $1$\r$\n"
   FileWrite $0 "}$\r$\n"
   FileClose $0
+  DetailPrint "設定ファイルを書き込みました: $PROFILE\.deckide\settings.json"
+  DetailPrint "  ポート: $PortValue"
+  DetailPrint "  ブラウザ自動起動: $1"
 
   ; ── Auto-start task ──────────────────────────────────────────
   ${If} $AutoStartValue == ${BST_CHECKED}
+    DetailPrint "自動起動タスクを登録中..."
     nsExec::ExecToLog 'schtasks /create /tn "DeckIDE" /tr "\"$INSTDIR\deckide.bat\" start --no-open" /sc onlogon /rl limited /f'
+    Pop $0
+    DetailPrint "自動起動タスクを登録しました。"
+  ${Else}
+    DetailPrint "自動起動: スキップ"
   ${EndIf}
 
   ; ── Start Menu shortcuts ─────────────────────────────────────
   ${If} $StartMenuValue == ${BST_CHECKED}
+    DetailPrint "スタートメニューにショートカットを作成中..."
     CreateDirectory "$SMPROGRAMS\DeckIDE"
     CreateShortcut "$SMPROGRAMS\DeckIDE\DeckIDE.lnk" \
       "$INSTDIR\deckide.bat" "start" "" "" SW_SHOWMINIMIZED "" "Deck IDE を起動する"
     CreateShortcut "$SMPROGRAMS\DeckIDE\DeckIDE をアンインストール.lnk" \
       "$INSTDIR\Uninstall.exe"
+    DetailPrint "スタートメニューのショートカットを作成しました。"
+  ${Else}
+    DetailPrint "スタートメニュー: スキップ"
   ${EndIf}
 
   ; ── Desktop shortcut ─────────────────────────────────────────
   ${If} $DesktopShortcutValue == ${BST_CHECKED}
+    DetailPrint "デスクトップにショートカットを作成中..."
     CreateShortcut "$DESKTOP\DeckIDE.lnk" \
       "$INSTDIR\deckide.bat" "start" "" "" SW_SHOWMINIMIZED "" "Deck IDE を起動する"
+    DetailPrint "デスクトップのショートカットを作成しました。"
+  ${Else}
+    DetailPrint "デスクトップショートカット: スキップ"
   ${EndIf}
 
   ; ── Add to PATH ───────────────────────────────────────────────
   ${If} $AddToPathValue == ${BST_CHECKED}
+    DetailPrint "システム PATH に追加中..."
     nsExec::ExecToLog 'powershell -NoProfile -Command "\
       $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey(\"SYSTEM\CurrentControlSet\Control\Session Manager\Environment\", $true);\
       $old = $key.GetValue(\"Path\", \"\", \"DoNotExpandEnvironmentNames\");\
-      if ($old -notlike \"*$INSTDIR*\") { $key.SetValue(\"Path\", $old + \";$INSTDIR\", \"ExpandString\") };\
-      $key.Close();\
-      [Environment]::SetEnvironmentVariable(\"Path\", [Environment]::GetEnvironmentVariable(\"Path\",\"Machine\"), \"Machine\")"'
+      if ($old -notlike \"*$INSTDIR*\") { $key.SetValue(\"Path\", $old + \";$INSTDIR\", \"ExpandString\"); Write-Host \"PATH に追加しました\" } else { Write-Host \"既に PATH に含まれています\" };\
+      $key.Close()"'
+    Pop $0
     SendMessage ${HWND_BROADCAST} ${WM_WININICHANGE} 0 "STR:Environment" /TIMEOUT=5000
+    DetailPrint "PATH への追加が完了しました。"
+  ${Else}
+    DetailPrint "PATH 追加: スキップ"
   ${EndIf}
 
   ; ── Uninstaller ──────────────────────────────────────────────
+  DetailPrint "アンインストーラーを作成中..."
   WriteUninstaller "$INSTDIR\Uninstall.exe"
+  DetailPrint "レジストリに登録中..."
   WriteRegStr   HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\DeckIDE" \
     "DisplayName"      "DeckIDE"
   WriteRegStr   HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\DeckIDE" \
@@ -217,6 +251,7 @@ Section "DeckIDE (必須)" SecMain
     "NoModify" 1
   WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\DeckIDE" \
     "NoRepair"  1
+  DetailPrint "レジストリへの登録が完了しました。"
 
   ; ── Launch after install ──────────────────────────────────────
   ${If} $LaunchAfterInstallValue == ${BST_CHECKED}
