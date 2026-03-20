@@ -70,44 +70,36 @@ Function OptionsPage
     Abort
   ${EndIf}
 
-  ; ── サーバー設定 ──────────────────────────
-  ${NSD_CreateGroupBox} 0 0u 100% 30u "サーバー設定"
+  ; ポート
+  ${NSD_CreateLabel} 0 2u 100u 12u "ポート番号 (1-65535):"
   Pop $0
-  ${NSD_CreateLabel} 8u 14u 90u 12u "ポート番号 (1–65535):"
-  Pop $0
-  ${NSD_CreateNumber} 108u 12u 60u 14u "8787"
+  ${NSD_CreateNumber} 104u 0u 60u 14u "8787"
   Pop $PortField
 
-  ; ── 起動設定 ──────────────────────────────
-  ${NSD_CreateGroupBox} 0 34u 100% 38u "起動設定"
-  Pop $0
-  ${NSD_CreateCheckbox} 8u 46u 100% 12u "Windows ログイン時に自動起動する"
+  ; 起動設定
+  ${NSD_CreateCheckbox} 0 18u 100% 12u "Windows ログイン時に自動起動する"
   Pop $AutoStartCheck
-  ${NSD_CreateCheckbox} 8u 60u 100% 12u "起動時にブラウザを自動で開く"
+  ${NSD_CreateCheckbox} 0 32u 100% 12u "起動時にブラウザを自動で開く"
   Pop $OpenBrowserCheck
   ${NSD_SetState} $OpenBrowserCheck ${BST_CHECKED}
 
-  ; ── ショートカット / PATH ─────────────────
-  ${NSD_CreateGroupBox} 0 76u 100% 52u "ショートカット / PATH"
-  Pop $0
-  ${NSD_CreateCheckbox} 8u 88u 100% 12u "デスクトップにショートカットを作成する"
+  ; ショートカット
+  ${NSD_CreateCheckbox} 0 48u 100% 12u "デスクトップにショートカットを作成する"
   Pop $DesktopShortcutCheck
   ${NSD_SetState} $DesktopShortcutCheck ${BST_CHECKED}
-  ${NSD_CreateCheckbox} 8u 102u 100% 12u "スタートメニューにショートカットを作成する"
+  ${NSD_CreateCheckbox} 0 62u 100% 12u "スタートメニューにショートカットを作成する"
   Pop $StartMenuCheck
   ${NSD_SetState} $StartMenuCheck ${BST_CHECKED}
-  ${NSD_CreateCheckbox} 8u 116u 100% 12u "システム PATH に deckide コマンドを追加する"
+  ${NSD_CreateCheckbox} 0 76u 100% 12u "システム PATH に deckide コマンドを追加する"
   Pop $AddToPathCheck
 
-  ; ── インストール後 ────────────────────────
-  ${NSD_CreateGroupBox} 0 132u 100% 24u "インストール後"
-  Pop $0
-  ${NSD_CreateCheckbox} 8u 144u 100% 12u "インストール完了後に DeckIDE を起動する"
+  ; インストール後
+  ${NSD_CreateCheckbox} 0 92u 100% 12u "インストール完了後に DeckIDE を起動する"
   Pop $LaunchAfterInstallCheck
   ${NSD_SetState} $LaunchAfterInstallCheck ${BST_CHECKED}
 
   ; Note
-  ${NSD_CreateLabel} 0 160u 100% 12u "これらの設定は後から「deckide config」コマンドで変更できます。"
+  ${NSD_CreateLabel} 0 108u 100% 12u "設定は後から「deckide config」で変更できます。"
   Pop $0
 
   nsDialogs::Show

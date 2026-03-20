@@ -35,7 +35,7 @@ jobs:
           New-Item -ItemType Directory -Force staging
           # 7zipでzip化（長いパスにも対応）
           $7z = "C:\Program Files\7-Zip\7z.exe"
-          & $7z a -tzip staging\app.zip bin src web node_modules package.json
+          & $7z a -tzip staging\app.zip bin dist src web node_modules package.json
           if ($LASTEXITCODE -ne 0) { throw "7z failed with exit code $LASTEXITCODE" }
           Write-Host "app.zip size: $((Get-Item staging\app.zip).Length) bytes"
 
