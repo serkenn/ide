@@ -185,7 +185,7 @@ Section "DeckIDE (必須)" SecMain
   ${If} $StartMenuValue == ${BST_CHECKED}
     CreateDirectory "$SMPROGRAMS\DeckIDE"
     CreateShortcut "$SMPROGRAMS\DeckIDE\DeckIDE.lnk" \
-      "$INSTDIR\deckide.bat" "start" "" "" SW_HIDE "" "Deck IDE を起動する"
+      "$INSTDIR\deckide.bat" "start" "" "" SW_SHOWMINIMIZED "" "Deck IDE を起動する"
     CreateShortcut "$SMPROGRAMS\DeckIDE\DeckIDE をアンインストール.lnk" \
       "$INSTDIR\Uninstall.exe"
   ${EndIf}
@@ -193,7 +193,7 @@ Section "DeckIDE (必須)" SecMain
   ; ── Desktop shortcut ─────────────────────────────────────────
   ${If} $DesktopShortcutValue == ${BST_CHECKED}
     CreateShortcut "$DESKTOP\DeckIDE.lnk" \
-      "$INSTDIR\deckide.bat" "start" "" "" SW_HIDE "" "Deck IDE を起動する"
+      "$INSTDIR\deckide.bat" "start" "" "" SW_SHOWMINIMIZED "" "Deck IDE を起動する"
   ${EndIf}
 
   ; ── Add to PATH ───────────────────────────────────────────────
