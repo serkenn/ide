@@ -104,6 +104,46 @@ export async function createServer() {
     app.use('/api/*', basicAuthMiddleware);
   }
 
+  // ── Claude Code → ブラウザ音声通知 (SSE, BasicAuth除外) ──────────────────
+  // SSEクライアント管理（ブラウザ接続ごとに1エントリ）
+  const speakSseClients = new Set<(data: string) => void>();
+
+  // ブラウザがSSEで購読
+  app.get('/api/speak/stream', (c) => {
+    const { readable, writable } = new TransformStream();
+    const writer = writable.getWriter();
+    const encoder = new TextEncoder();
+    const send = (data: string) => {
+      writer.write(encoder.encode(`data: ${data}\n\n`)).catch(() => {});
+    };
+    speakSseClients.add(send);
+    c.req.raw.signal.addEventListener('abort', () => {
+      speakSseClients.delete(send);
+      writer.close().catch(() => {});
+    });
+    writer.write(encoder.encode(': connected\n\n')).catch(() => {});
+    return new Response(readable, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'X-Accel-Buffering': 'no',
+        'Access-Control-Allow-Origin': '*',
+      },
+    });
+  });
+
+  // MCPサーバー（localhost）からのPOSTでブラウザ全員に配信
+  app.post('/api/speak', async (c) => {
+    let body: { text?: string; speaker?: number };
+    try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON' }, 400); }
+    const text    = String(body.text ?? '').slice(0, 200);
+    const speaker = Number(body.speaker ?? 3);
+    if (!text) return c.json({ error: 'text required' }, 400);
+    const payload = JSON.stringify({ text, speaker });
+    speakSseClients.forEach(send => { try { send(payload); } catch { speakSseClients.delete(send); } });
+    return c.json({ ok: true, clients: speakSseClients.size });
+  });
+
   app.get('/health', (c) =>
     c.json({ status: 'ok', timestamp: new Date().toISOString(), uptime: process.uptime() })
   );

@@ -28,6 +28,7 @@ import {
 } from './constants';
 import { parseUrlState } from './utils/urlUtils';
 import { createEmptyWorkspaceState, createEmptyDeckState } from './utils/stateUtils';
+import { speak, getAudioSettings } from './utils/audio';
 
 const MAX_ACTIVE_DECKS = 3;
 function moveItemBefore(items: string[], source: string, target: string) {
@@ -60,6 +61,19 @@ export default function App() {
   const [deckContextMenu, setDeckContextMenu] = useState<{ deckId: string; x: number; y: number } | null>(null);
 
   const { theme, handleToggleTheme } = useTheme();
+
+  // Claude Code MCPからの音声通知をSSEで受信してブラウザ再生
+  useEffect(() => {
+    const es = new EventSource('/api/speak/stream');
+    es.onmessage = (e) => {
+      try {
+        const { text, speaker } = JSON.parse(e.data) as { text: string; speaker: number };
+        const settings = getAudioSettings();
+        void speak(text, { ...settings, speakerId: speaker ?? settings.speakerId });
+      } catch { /* ignore */ }
+    };
+    return () => es.close();
+  }, []);
 
   const {
     isWorkspaceModalOpen,
