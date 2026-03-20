@@ -57,10 +57,13 @@ jobs:
       - name: Create staging directory
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force staging
-          # アプリファイルをzip化
-          $items = @("bin", "src", "web", "node_modules", "package.json")
-          Compress-Archive -Path $items -DestinationPath staging\app.zip -Force
+          # 7zipでzip化（長いパスにも対応）
+          $7z = "C:\Program Files\7-Zip\7z.exe"
+          & $7z a -tzip staging\app.zip bin src web node_modules package.json
+          if ($LASTEXITCODE -ne 0) { throw "7z failed with exit code $LASTEXITCODE" }
+          Write-Host "app.zip size: $((Get-Item staging\app.zip).Length) bytes"
 
       - name: Download Node.js portable exe
         shell: pwsh
@@ -85,12 +88,17 @@ jobs:
         run: echo "VERSION=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
 
       - name: Build installer
-        shell: cmd
+        shell: pwsh
         run: |
-          "C:\Program Files (x86)\NSIS\makensis.exe" ^
-            /DVERSION=${{ steps.version.outputs.VERSION }} ^
-            /DSTAGING_DIR=staging ^
-            installer\installer.nsi
+          $ErrorActionPreference = 'Stop'
+          $staging = (Resolve-Path "staging").Path
+          Write-Host "staging dir: $staging"
+          Get-ChildItem $staging
+          & "C:\Program Files (x86)\NSIS\makensis.exe" `
+            "/DVERSION=${{ steps.version.outputs.VERSION }}" `
+            "/DSTAGING_DIR=$staging" `
+            "installer\installer.nsi"
+          if ($LASTEXITCODE -ne 0) { throw "NSIS failed with exit code $LASTEXITCODE" }
 
       - name: Upload installer to GitHub Release
         uses: softprops/action-gh-release@v1
