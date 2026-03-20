@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { Terminal, type IDisposable } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { Unicode11Addon } from 'xterm-addon-unicode11';
@@ -12,6 +12,7 @@ import {
   TERMINAL_BACKGROUND_COLOR,
   TERMINAL_FOREGROUND_COLOR
 } from '../constants';
+import { notifyComplete, notifyExit, getAudioSettings } from '../utils/audio';
 
 interface TerminalTileProps {
   session: TerminalSession;
@@ -40,6 +41,98 @@ type ClientControlMessage =
 
 const textEncoder = new TextEncoder();
 
+// ── Mobile Special Key Bar ──────────────────────────────────────────────────
+
+type KeyDef =
+  | { label: ReactNode; data: string; cls?: string }
+  | { sep: true };
+
+const MOBILE_KEYS: KeyDef[] = [
+  // Navigation / control
+  { label: 'ESC',  data: '\x1b',    cls: 'key-ctrl' },
+  { label: 'TAB',  data: '\t',      cls: 'key-ctrl' },
+  { label: '↑',    data: '\x1b[A',  cls: 'key-arrow' },
+  { label: '↓',    data: '\x1b[B',  cls: 'key-arrow' },
+  { label: '←',    data: '\x1b[D',  cls: 'key-arrow' },
+  { label: '→',    data: '\x1b[C',  cls: 'key-arrow' },
+  { sep: true },
+  // Ctrl combos
+  { label: '^C',   data: '\x03',    cls: 'key-ctrl' },
+  { label: '^D',   data: '\x04',    cls: 'key-ctrl' },
+  { label: '^Z',   data: '\x1a',    cls: 'key-ctrl' },
+  { label: '^L',   data: '\x0c',    cls: 'key-ctrl' },
+  { label: '^A',   data: '\x01',    cls: 'key-ctrl' },
+  { label: '^E',   data: '\x05',    cls: 'key-ctrl' },
+  { label: '^U',   data: '\x15',    cls: 'key-ctrl' },
+  { label: '^K',   data: '\x0b',    cls: 'key-ctrl' },
+  { label: '^R',   data: '\x12',    cls: 'key-ctrl' },
+  { label: '^W',   data: '\x17',    cls: 'key-ctrl' },
+  { sep: true },
+  // Symbols not on typical mobile keyboards
+  { label: '|',    data: '|' },
+  { label: '~',    data: '~' },
+  { label: '`',    data: '`' },
+  { label: '/',    data: '/' },
+  { label: '\\',   data: '\\' },
+  { label: '-',    data: '-' },
+  { label: '_',    data: '_' },
+  { label: '#',    data: '#' },
+  { label: '&',    data: '&' },
+  { label: '*',    data: '*' },
+  { label: "'",    data: "'" },
+  { label: '"',    data: '"' },
+  { label: '(',    data: '(' },
+  { label: ')',    data: ')' },
+  { label: '[',    data: '[' },
+  { label: ']',    data: ']' },
+  { label: '{',    data: '{' },
+  { label: '}',    data: '}' },
+  { label: '<',    data: '<' },
+  { label: '>',    data: '>' },
+  { label: '!',    data: '!' },
+  { label: '@',    data: '@' },
+  { label: '$',    data: '$' },
+  { label: '%',    data: '%' },
+  { label: '^',    data: '^' },
+  { label: '=',    data: '=' },
+  { label: '+',    data: '+' },
+  { label: '?',    data: '?' },
+  { label: ';',    data: ';' },
+  { label: ':',    data: ':' },
+];
+
+interface MobileKeybarProps {
+  onSend: (data: string) => void;
+}
+
+function MobileKeybar({ onSend }: MobileKeybarProps) {
+  return (
+    <div className="mobile-keybar" aria-label="特殊キー入力バー">
+      {MOBILE_KEYS.map((key, i) => {
+        if ('sep' in key) {
+          return <span key={`sep-${i}`} className="mobile-keybar-sep" aria-hidden="true" />;
+        }
+        return (
+          <button
+            key={`${key.data}-${i}`}
+            type="button"
+            className={`mobile-key-btn${key.cls ? ` ${key.cls}` : ''}`}
+            onPointerDown={(e) => {
+              e.preventDefault(); // keep terminal focused, don't dismiss keyboard
+              onSend(key.data);
+            }}
+            aria-label={typeof key.label === 'string' ? key.label : undefined}
+          >
+            {key.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── TerminalTile ────────────────────────────────────────────────────────────
+
 function encodeBinaryInput(data: string): Uint8Array {
   const bytes = new Uint8Array(data.length);
   for (let i = 0; i < data.length; i++) {
@@ -59,6 +152,7 @@ export function TerminalTile({
   const socketRef = useRef<WebSocket | null>(null);
   const processedOffsetRef = useRef<number>(0);
   const onExitRef = useRef(onExit);
+  const sendRawRef = useRef<(data: string) => void>(() => {});
 
   useEffect(() => {
     onExitRef.current = onExit;
@@ -149,6 +243,16 @@ export function TerminalTile({
       const socket = socketRef.current;
       if (socket && socket.readyState === WebSocket.OPEN) {
         socket.send(textEncoder.encode(response));
+      }
+    };
+
+    // Expose a raw-send function for the mobile keybar
+    sendRawRef.current = (data: string) => {
+      if (replayingBuffer) return;
+      const sock = socketRef.current;
+      if (sock && sock.readyState === WebSocket.OPEN) {
+        sendControlMessage({ type: 'claim' });
+        sock.send(textEncoder.encode(data));
       }
     };
 
@@ -702,6 +806,10 @@ export function TerminalTile({
           }
 
           const bytes = new Uint8Array(event.data as ArrayBuffer);
+          // BEL (0x07) detection – only during live output, not replay
+          if (!replayingBuffer && bytes.indexOf(0x07) !== -1) {
+            notifyComplete(getAudioSettings());
+          }
           pendingWrites++;
           term.write(bytes, () => {
             processedOffsetRef.current += bytes.byteLength;
@@ -718,6 +826,7 @@ export function TerminalTile({
 
           if (event.code === 1000) {
             if (TERMINAL_REMOVED_REASONS.has(event.reason)) {
+              notifyExit(getAudioSettings());
               onExitRef.current();
               return;
             }
@@ -824,10 +933,13 @@ export function TerminalTile({
           onClick={() => { if (window.confirm('このターミナルを閉じますか？')) onDelete(); }}
           aria-label="ターミナルを閉じる"
         >
-          ×
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
+            <path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/>
+          </svg>
         </button>
       </div>
       <div className="terminal-tile-body" ref={containerRef} />
+      <MobileKeybar onSend={(data) => sendRawRef.current(data)} />
     </div>
   );
 }

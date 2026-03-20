@@ -1,4 +1,10 @@
 import { useState, useEffect } from 'react';
+import {
+  getAudioSettings,
+  saveAudioSettings,
+  type AudioSettings,
+} from '../utils/audio';
+import { playChime, playExit, speak } from '../utils/audio';
 
 interface Settings {
   port: number;
@@ -49,6 +55,9 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
   const [wsStats, setWsStats] = useState<WsStats | null>(null);
   const [isClearing, setIsClearing] = useState(false);
 
+  // Audio / voice settings (client-side localStorage)
+  const [audio, setAudio] = useState<AudioSettings>(getAudioSettings);
+
   const loadWsStats = () => {
     fetch('/api/ws/stats')
       .then(res => res.json())
@@ -69,6 +78,10 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
+
+  useEffect(() => {
+    if (isOpen) setAudio(getAudioSettings());
+  }, [isOpen]);
 
   useEffect(() => {
     if (isOpen) {
@@ -116,6 +129,8 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSaving(true);
+    // Save audio settings immediately (localStorage, no server call)
+    saveAudioSettings(audio);
     try {
       await onSave({
         port,
@@ -262,6 +277,79 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
                   {isClearing ? 'クリア中...' : LABEL_WS_CLEAR}
                 </button>
               </div>
+            </section>
+
+            {/* ── 音声・通知設定 ── */}
+            <section className="flex flex-col gap-3">
+              <h3 className="m-0 text-[11px] font-semibold uppercase tracking-[0.5px] text-ink-muted border-b border-border pb-2">
+                音声・通知
+              </h3>
+
+              <label className="flex items-center gap-2 text-xs cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={audio.soundEnabled}
+                  onChange={e => setAudio(a => ({ ...a, soundEnabled: e.target.checked }))}
+                />
+                <span>効果音を有効にする（BEL・プロセス終了時）</span>
+                <button
+                  type="button"
+                  className="ml-auto text-[10px] border border-border rounded px-1.5 py-0.5 text-muted hover:text-ink hover:bg-list-hover"
+                  onClick={() => playChime()}
+                >試聴</button>
+              </label>
+
+              <label className="flex items-center gap-2 text-xs cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={audio.voiceEnabled}
+                  onChange={e => setAudio(a => ({ ...a, voiceEnabled: e.target.checked }))}
+                />
+                <span>音声読み上げを有効にする（ずんだもん / ブラウザTTS）</span>
+              </label>
+
+              {audio.voiceEnabled && (
+                <div className="flex flex-col gap-2 pl-4 border-l-2 border-border">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[11px] text-ink-muted">VOICEVOX URL（ずんだもん用）</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        className={`flex-1 ${INPUT_CLASS}`}
+                        value={audio.voicevoxUrl}
+                        onChange={e => setAudio(a => ({ ...a, voicevoxUrl: e.target.value }))}
+                        placeholder="http://localhost:50021"
+                      />
+                      <button
+                        type="button"
+                        className="text-[11px] border border-border rounded px-2 py-1 text-muted hover:text-ink hover:bg-list-hover whitespace-nowrap"
+                        onClick={() => speak('こんにちは、ずんだもんなのだ！', audio)}
+                      >テスト</button>
+                    </div>
+                    <p className="m-0 text-[11px] text-muted">VOICEVOX未起動の場合はブラウザ内蔵TTSを使用</p>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[11px] text-ink-muted">スピーカーID（3 = ずんだもん）</label>
+                    <input
+                      type="number"
+                      className={INPUT_CLASS}
+                      value={audio.speakerId}
+                      onChange={e => setAudio(a => ({ ...a, speakerId: Number(e.target.value) }))}
+                      min={0}
+                      max={100}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <label className="flex items-center gap-2 text-xs cursor-pointer select-none">
+                <span className="text-muted">終了音テスト:</span>
+                <button
+                  type="button"
+                  className="text-[10px] border border-border rounded px-1.5 py-0.5 text-muted hover:text-ink hover:bg-list-hover"
+                  onClick={() => playExit()}
+                >試聴</button>
+              </label>
             </section>
 
             <p className="m-0 text-[11px] text-muted italic">{LABEL_RESTART_NOTE}</p>
