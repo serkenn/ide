@@ -77,7 +77,7 @@ jobs:
       - name: Upload installer to GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          files: DeckIDE-Setup-${{ steps.version.outputs.VERSION }}.exe
+          files: installer/DeckIDE-Setup-${{ steps.version.outputs.VERSION }}.exe
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
