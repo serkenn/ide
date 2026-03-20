@@ -32,6 +32,14 @@ Var AutoStartCheck
 Var AutoStartValue
 Var OpenBrowserCheck
 Var OpenBrowserValue
+Var DesktopShortcutCheck
+Var DesktopShortcutValue
+Var StartMenuCheck
+Var StartMenuValue
+Var AddToPathCheck
+Var AddToPathValue
+Var LaunchAfterInstallCheck
+Var LaunchAfterInstallValue
 
 ; ── MUI Settings ─────────────────────────────────────────────────
 !define MUI_ABORTWARNING
@@ -62,36 +70,57 @@ Function OptionsPage
     Abort
   ${EndIf}
 
-  ; Port label + field
-  ${NSD_CreateLabel} 0 4u 100u 12u "ポート番号 (1–65535):"
+  ; ── サーバー設定 ──────────────────────────
+  ${NSD_CreateGroupBox} 0 0u 100% 30u "サーバー設定"
   Pop $0
-  ${NSD_CreateNumber} 108u 2u 60u 14u "8787"
+  ${NSD_CreateLabel} 8u 14u 90u 12u "ポート番号 (1–65535):"
+  Pop $0
+  ${NSD_CreateNumber} 108u 12u 60u 14u "8787"
   Pop $PortField
 
-  ; Separator
-  ${NSD_CreateHLine} 0 24u 100% 1u
+  ; ── 起動設定 ──────────────────────────────
+  ${NSD_CreateGroupBox} 0 34u 100% 38u "起動設定"
   Pop $0
-
-  ; Auto-start checkbox
-  ${NSD_CreateCheckbox} 0 34u 100% 14u "Windows ログイン時に自動起動する"
+  ${NSD_CreateCheckbox} 8u 46u 100% 12u "Windows ログイン時に自動起動する"
   Pop $AutoStartCheck
-
-  ; Open-browser checkbox
-  ${NSD_CreateCheckbox} 0 54u 100% 14u "起動時にブラウザを自動で開く"
+  ${NSD_CreateCheckbox} 8u 60u 100% 12u "起動時にブラウザを自動で開く"
   Pop $OpenBrowserCheck
   ${NSD_SetState} $OpenBrowserCheck ${BST_CHECKED}
 
+  ; ── ショートカット / PATH ─────────────────
+  ${NSD_CreateGroupBox} 0 76u 100% 52u "ショートカット / PATH"
+  Pop $0
+  ${NSD_CreateCheckbox} 8u 88u 100% 12u "デスクトップにショートカットを作成する"
+  Pop $DesktopShortcutCheck
+  ${NSD_SetState} $DesktopShortcutCheck ${BST_CHECKED}
+  ${NSD_CreateCheckbox} 8u 102u 100% 12u "スタートメニューにショートカットを作成する"
+  Pop $StartMenuCheck
+  ${NSD_SetState} $StartMenuCheck ${BST_CHECKED}
+  ${NSD_CreateCheckbox} 8u 116u 100% 12u "システム PATH に deckide コマンドを追加する"
+  Pop $AddToPathCheck
+
+  ; ── インストール後 ────────────────────────
+  ${NSD_CreateGroupBox} 0 132u 100% 24u "インストール後"
+  Pop $0
+  ${NSD_CreateCheckbox} 8u 144u 100% 12u "インストール完了後に DeckIDE を起動する"
+  Pop $LaunchAfterInstallCheck
+  ${NSD_SetState} $LaunchAfterInstallCheck ${BST_CHECKED}
+
   ; Note
-  ${NSD_CreateLabel} 0 76u 100% 20u "これらの設定は後から「deckide config」コマンドで変更できます。"
+  ${NSD_CreateLabel} 0 160u 100% 12u "これらの設定は後から「deckide config」コマンドで変更できます。"
   Pop $0
 
   nsDialogs::Show
 FunctionEnd
 
 Function OptionsLeave
-  ${NSD_GetText}  $PortField       $PortValue
-  ${NSD_GetState} $AutoStartCheck  $AutoStartValue
-  ${NSD_GetState} $OpenBrowserCheck $OpenBrowserValue
+  ${NSD_GetText}  $PortField              $PortValue
+  ${NSD_GetState} $AutoStartCheck         $AutoStartValue
+  ${NSD_GetState} $OpenBrowserCheck       $OpenBrowserValue
+  ${NSD_GetState} $DesktopShortcutCheck   $DesktopShortcutValue
+  ${NSD_GetState} $StartMenuCheck         $StartMenuValue
+  ${NSD_GetState} $AddToPathCheck         $AddToPathValue
+  ${NSD_GetState} $LaunchAfterInstallCheck $LaunchAfterInstallValue
 
   ; Default to 8787 if empty
   ${If} $PortValue == ""
@@ -153,15 +182,30 @@ Section "DeckIDE (必須)" SecMain
   ${EndIf}
 
   ; ── Start Menu shortcuts ─────────────────────────────────────
-  CreateDirectory "$SMPROGRAMS\DeckIDE"
-  CreateShortcut "$SMPROGRAMS\DeckIDE\DeckIDE.lnk" \
-    "$INSTDIR\deckide.bat" "start" "" "" SW_HIDE "" "Deck IDE を起動する"
-  CreateShortcut "$SMPROGRAMS\DeckIDE\DeckIDE をアンインストール.lnk" \
-    "$INSTDIR\Uninstall.exe"
+  ${If} $StartMenuValue == ${BST_CHECKED}
+    CreateDirectory "$SMPROGRAMS\DeckIDE"
+    CreateShortcut "$SMPROGRAMS\DeckIDE\DeckIDE.lnk" \
+      "$INSTDIR\deckide.bat" "start" "" "" SW_HIDE "" "Deck IDE を起動する"
+    CreateShortcut "$SMPROGRAMS\DeckIDE\DeckIDE をアンインストール.lnk" \
+      "$INSTDIR\Uninstall.exe"
+  ${EndIf}
 
   ; ── Desktop shortcut ─────────────────────────────────────────
-  CreateShortcut "$DESKTOP\DeckIDE.lnk" \
-    "$INSTDIR\deckide.bat" "start" "" "" SW_HIDE "" "Deck IDE を起動する"
+  ${If} $DesktopShortcutValue == ${BST_CHECKED}
+    CreateShortcut "$DESKTOP\DeckIDE.lnk" \
+      "$INSTDIR\deckide.bat" "start" "" "" SW_HIDE "" "Deck IDE を起動する"
+  ${EndIf}
+
+  ; ── Add to PATH ───────────────────────────────────────────────
+  ${If} $AddToPathValue == ${BST_CHECKED}
+    nsExec::ExecToLog 'powershell -NoProfile -Command "\
+      $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey(\"SYSTEM\CurrentControlSet\Control\Session Manager\Environment\", $true);\
+      $old = $key.GetValue(\"Path\", \"\", \"DoNotExpandEnvironmentNames\");\
+      if ($old -notlike \"*$INSTDIR*\") { $key.SetValue(\"Path\", $old + \";$INSTDIR\", \"ExpandString\") };\
+      $key.Close();\
+      [Environment]::SetEnvironmentVariable(\"Path\", [Environment]::GetEnvironmentVariable(\"Path\",\"Machine\"), \"Machine\")"'
+    SendMessage ${HWND_BROADCAST} ${WM_WININICHANGE} 0 "STR:Environment" /TIMEOUT=5000
+  ${EndIf}
 
   ; ── Uninstaller ──────────────────────────────────────────────
   WriteUninstaller "$INSTDIR\Uninstall.exe"
@@ -172,15 +216,20 @@ Section "DeckIDE (必須)" SecMain
   WriteRegStr   HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\DeckIDE" \
     "DisplayVersion"   "${VERSION}"
   WriteRegStr   HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\DeckIDE" \
-    "Publisher"        "tako0614"
+    "Publisher"        "serkenn"
   WriteRegStr   HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\DeckIDE" \
     "InstallLocation"  "$INSTDIR"
   WriteRegStr   HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\DeckIDE" \
-    "URLInfoAbout"     "https://github.com/tako0614/ide"
+    "URLInfoAbout"     "https://github.com/serkenn/ide"
   WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\DeckIDE" \
     "NoModify" 1
   WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\DeckIDE" \
     "NoRepair"  1
+
+  ; ── Launch after install ──────────────────────────────────────
+  ${If} $LaunchAfterInstallValue == ${BST_CHECKED}
+    Exec '"$INSTDIR\deckide.bat" start'
+  ${EndIf}
 SectionEnd
 
 ; ── Uninstall section ────────────────────────────────────────────
@@ -190,6 +239,15 @@ Section "Uninstall"
 
   ; Remove auto-start task (ignore error if not present)
   nsExec::ExecToLog 'schtasks /delete /tn "DeckIDE" /f'
+
+  ; Remove from PATH if it was added
+  nsExec::ExecToLog 'powershell -NoProfile -Command "\
+    $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey(\"SYSTEM\CurrentControlSet\Control\Session Manager\Environment\", $true);\
+    $old = $key.GetValue(\"Path\", \"\", \"DoNotExpandEnvironmentNames\");\
+    $new = ($old -split \";\") | Where-Object { $_ -ne \"$INSTDIR\" } | Join-String -Separator \";\";\
+    $key.SetValue(\"Path\", $new, \"ExpandString\");\
+    $key.Close()"'
+  SendMessage ${HWND_BROADCAST} ${WM_WININICHANGE} 0 "STR:Environment" /TIMEOUT=5000
 
   ; Remove shortcuts
   Delete "$SMPROGRAMS\DeckIDE\DeckIDE.lnk"

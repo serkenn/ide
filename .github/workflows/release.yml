@@ -1,4 +1,4 @@
-name: Publish to npm
+name: Release
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  publish:
+  publish-npm:
     runs-on: ubuntu-latest
     environment: NPM_TOKEN
 
@@ -35,9 +35,63 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Create GitHub Release
+  build-installer:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Create staging directory
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force staging
+          # アプリファイルをzip化
+          $items = @("bin", "src", "web", "node_modules", "package.json")
+          Compress-Archive -Path $items -DestinationPath staging\app.zip -Force
+
+      - name: Download Node.js portable exe
+        shell: pwsh
+        run: |
+          $nodeVersion = "22.14.0"
+          $url = "https://nodejs.org/dist/v$nodeVersion/node-v$nodeVersion-win-x64.zip"
+          Write-Host "Downloading Node.js $nodeVersion..."
+          Invoke-WebRequest -Uri $url -OutFile node_dist.zip
+          Expand-Archive -Path node_dist.zip -DestinationPath node_tmp -Force
+          Copy-Item "node_tmp\node-v$nodeVersion-win-x64\node.exe" "staging\node.exe"
+
+      - name: Install NSIS
+        run: choco install nsis -y
+
+      - name: Get version tag
+        id: version
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Build installer
+        shell: cmd
+        run: |
+          "C:\Program Files (x86)\NSIS\makensis.exe" ^
+            /DVERSION=${{ steps.version.outputs.VERSION }} ^
+            /DSTAGING_DIR=staging ^
+            installer\installer.nsi
+
+      - name: Upload installer to GitHub Release
         uses: softprops/action-gh-release@v1
         with:
+          files: DeckIDE-Setup-${{ steps.version.outputs.VERSION }}.exe
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
