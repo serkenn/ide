@@ -65,9 +65,14 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          # NSIファイルをUTF-8 BOM付きで書き直し（日本語文字化け対策）
+          $nsi = Get-Content installer\installer.nsi -Raw -Encoding UTF8
+          [System.IO.File]::WriteAllText(
+            (Resolve-Path "installer\installer.nsi").Path,
+            $nsi,
+            [System.Text.UTF8Encoding]::new($true)
+          )
           $staging = (Resolve-Path "staging").Path
-          Write-Host "staging dir: $staging"
-          Get-ChildItem $staging
           & "C:\Program Files (x86)\NSIS\makensis.exe" `
             "/DVERSION=${{ steps.version.outputs.VERSION }}" `
             "/DSTAGING_DIR=$staging" `
